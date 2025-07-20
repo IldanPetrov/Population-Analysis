@@ -12,36 +12,65 @@ from random import randint
 
 
 def load_excel_data(file_path: str, sheet_name: str, columns: str | list[str]) -> pd.DataFrame:
+    # Преобразуем columns в список, если передана строка
+    if isinstance(columns, str):
+        columns = [columns]
+
+    # Сначала считываем первые 50 строк без заголовка для анализа
+    raw_data = pd.read_excel(
+        file_path,
+        sheet_name=sheet_name,
+        header=None,
+        nrows=50
+    )
+
+    # Ищем строку, где есть все нужные колонки
+    header_row = None
+    for i in range(len(raw_data)):
+        # Получаем значения в строке, исключая NaN
+        row_values = [str(val).strip() for val in raw_data.iloc[i] if pd.notna(val)]
+
+        # Проверяем, есть ли все искомые колонки
+        if all(col in row_values for col in columns):
+            header_row = i
+            break
+
+    if header_row is None:
+        print(f"Ошибка: не найдены все указанные колонки: {columns}")
+        return None
+
+    # print(header_row)
+    # Теперь правильно считываем данные
     try:
         df = pd.read_excel(
             file_path,
-            sheet_name=sheet_name,
             usecols=columns,
-            skiprows=19,
-            header=0
+            sheet_name=sheet_name,
+            skiprows=header_row,
+            header=0,
+            engine='openpyxl'  # Явно указываем движок для .xlsx файлов
         )
 
-        print_df(df)
         df.dropna(axis=0, how='any', inplace=True)
+
         return df
 
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"Ошибка при чтении файла: {e}")
         return None
 
 
 def print_df(df):
     # Ищем имя переменной в вызывающем коде
-    # caller_frame = inspect.currentframe().f_back
-    # for name, obj in caller_frame.f_locals.items():
-    #     if obj is df:
-    #         print(f"\n{name}:")
-    #         print(df.head())
-    #         break
-    # else:
-    #     print("\nUnnamed DataFrame:")
-    #     print(df.head())
-    pass
+    caller_frame = inspect.currentframe().f_back
+    for name, obj in caller_frame.f_locals.items():
+        if obj is df:
+            print(f"\n{name}:")
+            print(df.head())
+            break
+    else:
+        print("\nUnnamed DataFrame:")
+        print(df.head())
 
 
 def find_deviations(df: pd.DataFrame, columns: list[str], threshold=0.15):
@@ -168,24 +197,25 @@ def plot_df(df, columns=None, x_column=None, figsize=(12, 6)):
 def main():
     warnings.filterwarnings("ignore")
     data_sheets = os.listdir("data")
-    data_sheet = [sheet for sheet in data_sheets if ".xls" in sheet]
+    data_sheets = [sheet for sheet in data_sheets if ".xlsx" in sheet]
+    # print(data_sheets)
     if len(data_sheets) > 0:
         print("Choose the data sheet you wish to load by number:")
-        print('\n'.join(["\t" + str(i + 1) + ": " + x for i, x in enumerate(data_sheet)]))
-    # file = data_sheet[int(input()) - 1]
-    file = data_sheet[0]
+        print('\n'.join(["\t" + str(i + 1) + ": " + x for i, x in enumerate(data_sheets)]))
+    file = data_sheets[int(input()) - 1]
+    # file = data_sheets[0]
     file_path = "data/" + file
     result_file = pd.ExcelWriter('results/Prepared ' + file)
 
     samples = load_excel_data(
         file_path,
         "Sample Setup",
-        ["Well", "Well Position", "Sample Name"]
+        ["Well Position", "Sample Name"]
     )
     cycles = load_excel_data(
         file_path,
         "Multicomponent Data",
-        ["Well", "Well Position", "Cycle", "FAM"]
+        ["Well Position", "Cycle", "FAM"]
     )
 
     sample_count = {}
@@ -198,17 +228,28 @@ def main():
 
     samples['Nick'] = [name + ' (' + str(get_update_val(name)) + ')' for name in samples['Sample Name']]
     samples.set_index('Nick', inplace=True)
-    print_df(samples)
 
-    # print(groups)
+    samples['Well Position'] = samples['Well Position'].astype(str).str.strip().str.upper()
+    cycles['Well Position'] = cycles['Well Position'].astype(str).str.strip().str.upper()
+
+    print_df(cycles)
+    print_df(samples)
+    print(sorted(cycles['Well Position'].unique()))
+    print(sorted(samples['Well Position'].unique()))
+
+    # with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', None):
+    #     print(samples)
+    #     print(cycles)
 
     merged = pd.merge(
         cycles,
         samples.reset_index(),  # Превращаем 'Nick' в столбец
-        on='Well',  # Или 'Well Position'
+        on='Well Position',
         how='left'
     )
-    print_df(merged)
+
+    dupes = merged[merged.duplicated(subset=['Cycle', 'Nick'], keep=False)]
+    print(dupes.sort_values(['Nick', 'Cycle']))
 
     # Шаг 2: Создаём сводную таблицу
     result = merged.pivot(
@@ -216,17 +257,14 @@ def main():
         columns='Nick',
         values='FAM'
     )
-    print_df(result)
 
     # Применяем новую сортировку
     fine_sheet = result[samples.index.tolist()]
-    print_df(fine_sheet)
     fine_sheet['Time'] = [
         (x - 1) * 0.25 if x <= 100 else 24.75 + x - 100
         for x in fine_sheet.index
     ]
     fine_sheet.set_index('Time', inplace=True)
-    print_df(fine_sheet)
 
     fine_sheet.to_excel(result_file, sheet_name='Iterations Data', index=True, header=True)
 
@@ -259,8 +297,6 @@ def main():
 
         mean_samples.drop(base_tag, axis=1, inplace=True)
 
-    print_df(fine_sheet)
-    print_df(mean_samples)
     fine_sheet.to_excel(result_file, sheet_name='Subtracted base', index=True, header=True)
 
     for col in fine_sheet.columns:
@@ -292,7 +328,8 @@ def main():
     time_range = int(input('Введите длину временного интервала для определения максимума (целое число), \n'
                            'например 4 минут: будет брать интервал из 5 значений: ')) + 1
 
-    metrics = pd.DataFrame(index=smoothed.columns, columns=['Max', 'Slope', 'Slope time', 'B', 'Time to max', 'Practice value'])
+    metrics = pd.DataFrame(index=smoothed.columns,
+                           columns=['Max', 'Slope', 'Slope time', 'B', 'Time to max', 'Practice value'])
     max_val = {}
     for group_sign in groups.keys():
         max_val[group_sign] = 0
@@ -314,11 +351,10 @@ def main():
         metrics.loc[list(groups[group_sign]), 'Max'] = max_val[group_sign]
         lines[group_sign + '_max'] = max_val[group_sign]
 
-    print(max_val)
+    # print(max_val)
     plot_df(lines)
 
     lines.to_excel(result_file, sheet_name='Smoothed', index=True, header=True)
-
 
     metrics['Time to max'] = metrics['Max'] / metrics['Slope']
     metrics['Practice value'] = 3 / metrics['Time to max']
