@@ -6,9 +6,11 @@ import pandas as pd
 from plot_service import PlotServer
 
 import warnings
+from random import randint
 
 from smoothings import hybrid_smoothing, enhanced_smoothing, advanced_smoothing, advanced_window_smoothing
-from random import randint
+
+
 
 
 def load_excel_data(file_path: str, sheet_name: str, columns: str | list[str]) -> pd.DataFrame:
@@ -202,10 +204,9 @@ def main():
 
     # Применяем новую сортировку
     fine_sheet = result[samples.index.tolist()]
-    fine_sheet['Time'] = [
-        (x - 1) * 0.25 if x <= 100 else 24.75 + x - 100
-        for x in fine_sheet.index
-    ]
+
+    from time_utils import cycle_to_time
+    fine_sheet['Time'] = [cycle_to_time(c) for c in fine_sheet.index]
 
     fine_sheet.set_index('Time', inplace=True)
     fine_sheet.to_excel(result_file, sheet_name='Iterations Data', index=True, header=True)
@@ -245,7 +246,7 @@ def main():
     fine_sheet.to_excel(result_file, sheet_name='Shifted to zero', index=True, header=True)
 
     for group_sign in groups.keys():
-        for tag in groups[group_sign]:
+        for tag in sorted(groups[group_sign]):
             calc_group_mean(tag)
 
     mean_samples.to_excel(result_file, sheet_name='Means', index=True, header=True)
@@ -253,8 +254,9 @@ def main():
     smoothed = pd.DataFrame(index=mean_samples.index, columns=mean_samples.columns)
 
     for col in mean_samples.columns:
-        smoothed[col] = advanced_window_smoothing(mean_samples, col, window_size=1)
-        smoothed[col] = advanced_smoothing(smoothed, col)
+        smoothed[col] = advanced_window_smoothing(mean_samples, col)
+        # smoothed[col] = advanced_smoothing(smoothed, col)
+
     plotter.plot_df(smoothed, title='Smoothed')
 
     lines = smoothed.copy()
@@ -301,3 +303,14 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# 1
+#
+#
+# 4
+# 3,4
+#
+#
+#
+# 1

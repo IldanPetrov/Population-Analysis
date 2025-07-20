@@ -5,63 +5,41 @@ from numpy.ma.core import choose
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 from statsmodels.nonparametric.smoothers_lowess import lowess
+from time_utils import cycle_to_time
 
 
-def advanced_window_smoothing(series, value_col, window_size = 3):
+def advanced_window_smoothing(series, value_col, window_minutes=3.0):
     """
-    Улучшенное сглаживание с окном ±3 минуты и интерполяцией после 24.75 мин
+    Сглаживание по окну заданной ширины во времени, с учетом неравномерных dt
 
     Параметры:
-    ----------
-    series : pd.Series или pd.DataFrame
-        Входные данные с временным индексом в минутах
-    value_col : str
-        Название столбца со значениями для сглаживания
+        series: DataFrame с временным индексом
+        value_col: название столбца со значениями
+        window_minutes: ширина окна (в минутах), по умолчанию ±3 мин
 
     Возвращает:
-    ----------
-    pd.Series с сглаженными значениями
+        сглаженная серия (по тому же индексу)
     """
-    # Извлекаем данные
-    time_values = series.index.to_numpy()
+    time = series.index.to_numpy()
     values = series[value_col].to_numpy()
+    smoothed = np.zeros_like(values)
 
-    # Создаем целевую сетку времени:
-    # - до 24.75 мин: исходные точки
-    # - после 24.75 мин: шаг 0.25 мин
-    target_times = []
-    for t in time_values:
-        if t <= 24.75:
-            target_times.append(t)
-        else:
-            # Добавляем точки с шагом 0.25 после 24.75
-            next_t = np.ceil(t * 4) / 4  # Округляем до ближайшего 0.25
-            target_times.extend(np.arange(24.75, next_t + 0.25, 0.25))
+    for i, t in enumerate(time):
+        # Находим точки в окне [t - W, t + W]
+        in_window = (time >= t - window_minutes) & (time <= t + window_minutes)
+        t_neighbors = time[in_window]
+        v_neighbors = values[in_window]
 
-    target_times = np.unique(target_times)  # Удаляем дубликаты
+        if len(v_neighbors) == 0:
+            smoothed[i] = values[i]
+            continue
 
-    # Функция для расчета взвешенного среднего в окне
-    def weighted_mean(t):
-        window = (time_values >= t - window_size) & (time_values <= t + window_size)
-        window_values = values[window]
-        if len(window_values) == 0:
-            return np.nan
-        # Гауссовы веса (больший вес ближе к центру)
-        weights = np.exp(-(time_values[window] - t) ** 2 / (2 * 1.0 ** 2))
-        return np.average(window_values, weights=weights)
+        # Гауссовые веса с σ = window_minutes / 2
+        sigma = window_minutes / 2
+        weights = np.exp(-((t_neighbors - t) ** 2) / (2 * sigma ** 2))
+        smoothed[i] = np.average(v_neighbors, weights=weights)
 
-    # Применяем сглаживание ко всем целевым точкам
-    smoothed = np.array([weighted_mean(t) for t in target_times])
-
-    # Интерполяция обратно к исходным временным точкам
-    interp_func = interp1d(
-        target_times, smoothed,
-        kind='linear',
-        bounds_error=False,
-        fill_value="extrapolate"
-    )
-
-    return pd.Series(interp_func(time_values), index=series.index)
+    return pd.Series(smoothed, index=series.index)
 
 
 def adaptive_smoothing_indexed(series, value_col):
