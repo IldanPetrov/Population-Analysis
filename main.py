@@ -12,11 +12,14 @@ from random import randint
 
 
 def load_excel_data(file_path: str, sheet_name: str, columns: str | list[str]) -> pd.DataFrame:
-    # Преобразуем columns в список, если передана строка
     if isinstance(columns, str):
         columns = [columns]
 
-    # Сначала считываем первые 50 строк без заголовка для анализа
+    # Определим альтернативные названия для некоторых колонок
+    alt_names = {
+        "FAM": ["SYBR"]
+    }
+
     raw_data = pd.read_excel(
         file_path,
         sheet_name=sheet_name,
@@ -24,39 +27,57 @@ def load_excel_data(file_path: str, sheet_name: str, columns: str | list[str]) -
         nrows=50
     )
 
-    # Ищем строку, где есть все нужные колонки
     header_row = None
+    selected_columns = columns.copy()
+
     for i in range(len(raw_data)):
-        # Получаем значения в строке, исключая NaN
         row_values = [str(val).strip() for val in raw_data.iloc[i] if pd.notna(val)]
 
-        # Проверяем, есть ли все искомые колонки
-        if all(col in row_values for col in columns):
+        test_columns = selected_columns.copy()
+
+        # Проверяем наличие альтернатив для FAM
+        for j, col in enumerate(test_columns):
+            if col in alt_names and col not in row_values:
+                for alt in alt_names[col]:
+                    if alt in row_values:
+                        test_columns[j] = alt
+                        break
+
+        if all(col in row_values for col in test_columns):
             header_row = i
+            selected_columns = test_columns
             break
 
     if header_row is None:
-        print(f"Ошибка: не найдены все указанные колонки: {columns}")
+        print(f"❌ Ошибка: не найдены все указанные колонки: {columns}")
         return None
 
-    # print(header_row)
-    # Теперь правильно считываем данные
     try:
         df = pd.read_excel(
             file_path,
-            usecols=columns,
+            usecols=selected_columns,
             sheet_name=sheet_name,
             skiprows=header_row,
             header=0,
-            engine='openpyxl'  # Явно указываем движок для .xlsx файлов
+            engine='openpyxl'
         )
 
-        df.dropna(axis=0, how='any', inplace=True)
+        df.dropna(subset=selected_columns, inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+        # Приводим названия столбцов к исходным (если заменяли FAM → SYBR)
+        rename_map = {
+            alt: orig
+            for orig, alts in alt_names.items()
+            for alt in alts
+            if alt in df.columns and orig not in df.columns
+        }
+        df.rename(columns=rename_map, inplace=True)
 
         return df
 
     except Exception as e:
-        print(f"Ошибка при чтении файла: {e}")
+        print(f"❌ Ошибка при чтении файла '{file_path}': {e}")
         return None
 
 
@@ -262,7 +283,7 @@ def main():
             lines[tag + '_tang'] = metrics.loc[tag, 'B'] + metrics.loc[tag, 'Slope'] * lines.index
 
         metrics.loc[list(groups[group_sign]), 'Max'] = max_val[group_sign]
-        lines[group_sign + '_max'] = max_val[group_sign]
+        # lines[group_sign + '_max'] = max_val[group_sign]
 
     # print(max_val)
     plotter.plot_df(lines, title='Max bounds')
@@ -276,6 +297,7 @@ def main():
 
     result_file.close()
     plotter.close()
+
 
 if __name__ == '__main__':
     main()
