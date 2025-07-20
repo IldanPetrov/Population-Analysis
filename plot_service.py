@@ -7,6 +7,7 @@ matplotlib.use('TkAgg')  # Для GUI
 class PlotServer:
     def __init__(self):
         self.queue = Queue()
+        self.ack_queue = Queue()
         self.process = Process(target=self._worker, args=(self.queue,), daemon=True)
         self.process.start()
 
@@ -38,6 +39,8 @@ class PlotServer:
             fig.tight_layout()
             fig.show()
             figures.append(fig)
+            plt.pause(0.01)
+            self.ack_queue.put("done")  # подтверждение
 
         print("Plot server exiting.")
         plt.ioff()
@@ -45,6 +48,7 @@ class PlotServer:
 
     def plot_df(self, df, columns=None, x_column=None, title=None):
         self.queue.put((df, columns, x_column, title))
+        self.ack_queue.get()  # дождаться подтверждения отрисовки
 
     def close(self):
         self.queue.put("STOP")

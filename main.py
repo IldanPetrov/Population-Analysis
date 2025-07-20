@@ -76,6 +76,8 @@ def print_df(df):
 def find_deviations(df: pd.DataFrame, columns: list[str], threshold=0.15):
     last_values = df.loc[:, columns].iloc[-1]
 
+    plotter.plot_df(df[columns], title=columns[0][:2])
+
     # Рассчитываем медиану
     median_val = last_values.median()
 
@@ -257,7 +259,7 @@ def main():
                     metrics.loc[tag, 'Slope time'] = smoothed.index[i - 1]
                     metrics.loc[tag, 'B'] = smoothed[tag].iloc[i - 1] - slope * smoothed.index[i - 1]
 
-            # lines[tag + '_tang'] = metrics.loc[tag, 'B'] + metrics.loc[tag, 'Slope'] * lines.index
+            lines[tag + '_tang'] = metrics.loc[tag, 'B'] + metrics.loc[tag, 'Slope'] * lines.index
 
         metrics.loc[list(groups[group_sign]), 'Max'] = max_val[group_sign]
         lines[group_sign + '_max'] = max_val[group_sign]
