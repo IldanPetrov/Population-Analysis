@@ -1,9 +1,9 @@
 import multiprocessing
 import pickle
 
-
 import inspect
 import os
+import time
 
 import warnings
 from random import randint
@@ -12,7 +12,7 @@ import pandas as pd
 
 # from plot_service import PlotServer
 from plot_gui_server import plot_gui_worker, PlotClient
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Pipe
 from smoothings import hybrid_smoothing, enhanced_smoothing, advanced_smoothing, advanced_window_smoothing
 
 
@@ -148,21 +148,12 @@ def find_deviations(df: pd.DataFrame, columns: list[str], threshold=0.15):
 
 def main():
     # Запускаем сервер
-    queue = Queue()
-    p = Process(target=plot_gui_worker, args=(queue,), daemon=False)
+    parent_conn, child_conn = Pipe()
+    p = Process(target=plot_gui_worker, args=(child_conn,), daemon=False)
     p.start()
+    time.sleep(0.2)
 
-    # --- разогревающие "dummy" сообщения ---
-    for _ in range(4):
-        queue.put({
-            'df': pickle.dumps(pd.DataFrame()),
-            'columns': None,
-            'x_column': None,
-            'title': '__DUMMY__',
-            'figsize': (4, 4)
-        })
-
-    plotter = PlotClient(queue)
+    plotter = PlotClient(parent_conn)
 
     warnings.filterwarnings("ignore")
 
@@ -233,7 +224,6 @@ def main():
     find_group = lambda tag: samples[samples['Sample Name'] == tag].index.tolist()
 
     def calc_group_mean(tag: str):
-        base_tag = tag
         members = find_group(tag)
         plotter.plot_df(fine_sheet[members], title=tag)
 
@@ -316,6 +306,8 @@ def main():
 
     result_file.close()
 
+    p.join()
+
 
 if __name__ == "__main__":
     try:
@@ -323,7 +315,6 @@ if __name__ == "__main__":
     except RuntimeError:
         pass
     main()
-
 
 # 1
 #

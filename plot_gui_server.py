@@ -7,16 +7,19 @@ import pandas as pd
 import pickle
 
 
-def plot_gui_worker(queue: Queue):
+def plot_gui_worker(conn):
     import matplotlib
     matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
     import tkinter as tk
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+    import pickle
 
     class PlotApp:
         def __init__(self, master):
             self.master = master
+            self.closed = False
+
             self.master.title("Plot Viewer")
             self.master.geometry("1000x700")
 
@@ -33,58 +36,51 @@ def plot_gui_worker(queue: Queue):
             self.current_fig = None
 
             self.listbox.bind("<<ListboxSelect>>", self.on_select)
-            self.master.after(100, self.check_queue)
 
-        def check_queue(self):
-            try:
-                while not queue.empty():
-                    task = queue.get_nowait()
-                    if task == "STOP":
-                        self.master.destroy()
-                        return
+            self.after_id = self.master.after(100, self.check_pipe)
+            self.master.protocol("WM_DELETE_WINDOW", self.on_close)
 
-                    df = pickle.loads(task['df'])
-                    columns = task.get('columns') or df.columns
-                    x_column = task.get('x_column')
-                    title = task.get('title') or "Plot"
-                    if title == '__DUMMY__':
-                        continue
+        def check_pipe(self):
+            if self.closed:
+                return
 
-                    figsize = task.get('figsize', (8, 6))
+            while conn.poll():
+                task = conn.recv()
+                if isinstance(task, dict) and task.get("cmd") == "STOP":
+                    self.master.destroy()
+                    return
 
-                    x = df[x_column] if x_column else df.index
+                df = pickle.loads(task['df'])
+                columns = task.get('columns') or df.columns
+                x_column = task.get('x_column')
+                title = task.get('title') or "Plot"
+                figsize = task.get('figsize', (8, 6))
 
-                    fig, ax = plt.subplots(figsize=figsize)
-                    for col in columns:
-                        ax.plot(x, df[col], label=col)
-                    ax.set_title(title)
-                    ax.set_xlabel(x_column or df.index.name or "Index")
-                    ax.grid(True)
-                    ax.legend()
+                x = df[x_column] if x_column else df.index
 
-                    self.figures.append(fig)
-                    self.names.append(title)
-                    self.listbox.insert(tk.END, title)
+                fig, ax = plt.subplots(figsize=figsize)
+                for col in columns:
+                    ax.plot(x, df[col], label=col)
+                ax.set_title(title)
+                ax.set_xlabel(x_column or df.index.name or "Index")
+                ax.grid(True)
+                ax.legend()
 
-                    if len(self.figures) == 1:
-                        self.display_figure(0)
-                        self.listbox.select_set(0)
-                    else:
-                        # !!! Показываем только что добавленный график
-                        self.display_figure(len(self.figures) - 1)
-                        self.listbox.select_clear(0, tk.END)
-                        self.listbox.select_set(len(self.figures) - 1)
-                        self.listbox.see(len(self.figures) - 1)
+                self.figures.append(fig)
+                self.names.append(title)
+                self.listbox.insert(tk.END, title)
 
+                if len(self.figures) == 1:
+                    self.display_figure(0)
+                    self.listbox.select_set(0)
+                else:
+                    # !!! Показываем только что добавленный график
+                    self.display_figure(len(self.figures) - 1)
+                    self.listbox.select_clear(0, tk.END)
+                    self.listbox.select_set(len(self.figures) - 1)
+                    self.listbox.see(len(self.figures) - 1)
 
-            except Exception as e:
-                import traceback
-                print("Error in GUI worker:", e)
-                traceback.print_exc()
-            finally:
-                # Проверяем, окно не уничтожено
-                if self.master.winfo_exists():
-                    self.master.after(100, self.check_queue)
+            self.after_id = self.master.after(100, self.check_pipe)
 
         def display_figure(self, index):
             if self.canvas:
@@ -104,18 +100,27 @@ def plot_gui_worker(queue: Queue):
             if selection:
                 self.display_figure(selection[0])
 
+        def on_close(self):
+            self.closed = True
+            if hasattr(self, 'after_id'):
+                self.master.after_cancel(self.after_id)
+            self.master.destroy()
+            self.master.quit()
+
     root = tk.Tk()
     app = PlotApp(root)
     root.mainloop()
+    import sys
+    sys.exit(0)
 
 
 class PlotClient:
-    def __init__(self, queue):
-        self.queue = queue
+    def __init__(self, conn):
+        self.conn = conn
 
     def plot_df(self, df, columns=None, x_column=None, title=None, figsize=(12, 6)):
         # сериализуем DataFrame
-        self.queue.put({
+        self.conn.send({
             'df': pickle.dumps(df),  # !!!
             'columns': columns,
             'x_column': x_column,
