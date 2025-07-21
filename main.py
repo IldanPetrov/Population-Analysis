@@ -1,16 +1,19 @@
+import multiprocessing
+import pickle
+
+
 import inspect
 import os
-
-import pandas as pd
-
-from plot_service import PlotServer
 
 import warnings
 from random import randint
 
+import pandas as pd
+
+# from plot_service import PlotServer
+from plot_gui_server import plot_gui_worker, PlotClient
+from multiprocessing import Process, Queue
 from smoothings import hybrid_smoothing, enhanced_smoothing, advanced_smoothing, advanced_window_smoothing
-
-
 
 
 def load_excel_data(file_path: str, sheet_name: str, columns: str | list[str]) -> pd.DataFrame:
@@ -99,8 +102,6 @@ def print_df(df):
 def find_deviations(df: pd.DataFrame, columns: list[str], threshold=0.15):
     last_values = df.loc[:, columns].iloc[-1]
 
-    plotter.plot_df(df[columns], title=columns[0][:2])
-
     # Рассчитываем медиану
     median_val = last_values.median()
 
@@ -146,9 +147,24 @@ def find_deviations(df: pd.DataFrame, columns: list[str], threshold=0.15):
 
 
 def main():
-    global plotter
+    # Запускаем сервер
+    queue = Queue()
+    p = Process(target=plot_gui_worker, args=(queue,), daemon=False)
+    p.start()
+
+    # --- разогревающие "dummy" сообщения ---
+    for _ in range(4):
+        queue.put({
+            'df': pickle.dumps(pd.DataFrame()),
+            'columns': None,
+            'x_column': None,
+            'title': '__DUMMY__',
+            'figsize': (4, 4)
+        })
+
+    plotter = PlotClient(queue)
+
     warnings.filterwarnings("ignore")
-    plotter = PlotServer()
 
     data_sheets = os.listdir("data")
     data_sheets = [sheet for sheet in data_sheets if ".xlsx" in sheet]
@@ -219,6 +235,7 @@ def main():
     def calc_group_mean(tag: str):
         base_tag = tag
         members = find_group(tag)
+        plotter.plot_df(fine_sheet[members], title=tag)
 
         valid_members = find_deviations(fine_sheet, members, threshold=0.15)
         mean_samples[tag] = fine_sheet[valid_members].mean(axis=1)
@@ -298,10 +315,13 @@ def main():
     metrics.to_excel(result_file, sheet_name='Metrics', index=True, header=True)
 
     result_file.close()
-    plotter.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    try:
+        multiprocessing.set_start_method('spawn')
+    except RuntimeError:
+        pass
     main()
 
 
