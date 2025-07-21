@@ -130,7 +130,7 @@ def find_deviations(df: pd.DataFrame, columns: list[str], threshold=0.15):
     with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
         print(report)
 
-    reason = ['', ' для пощады', ', чтобы помиловать', ', чтобы не заморачиваться'][randint(0, 3)]
+    reason = ['', ' для пощады', ', чтобы помиловать', ', чтобы не замарачиваться'][randint(0, 3)]
     print(f"Чтобы удалить выберите номера через запятую или оставьте пустую строку{reason}:")
     for i, col in enumerate(columns):
         print(f"\t{i + 1}: {col}")
